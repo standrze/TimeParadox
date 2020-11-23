@@ -20,15 +20,14 @@
 package main
 
 import (
+	pb "TimeParadox/paradox"
 	"context"
 	"github.com/google/martian"
 	"github.com/google/martian/fifo"
+	"google.golang.org/grpc"
 	"log"
 	"net"
 	"net/http"
-
-	"google.golang.org/grpc"
-	pb
 )
 
 const (
@@ -38,7 +37,11 @@ const (
 var m = &Modifier{"Hello"}
 
 type Modifier struct {
-	name		string
+	name string
+}
+
+type server struct {
+	pb.UnimplementedParadoxServer
 }
 
 func (m *Modifier) ModifyRequest(req *http.Request) error {
@@ -53,19 +56,14 @@ func (m *Modifier) ServeHTTP(http.ResponseWriter, *http.Request) {
 }
 
 func (m *Modifier) GetName() string {
-	return m.name;
+	return m.name
 }
 
-// server is used to implement helloworld.GreeterServer.
-type server struct {
-	pb.UnimplementedGreeterServer
-}
-
-// SayHello implements helloworld.GreeterServer
-func (s *server) HelloWorld(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
+func (s *server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
 	log.Printf("Received: %v", in.GetName())
-	return &pb.HelloReply{Message: "Hello " + "fucker!"}, nil
+	return &pb.Reply{Message: "Hello " + "fucker!"}, nil
 }
+
 // protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative paradox.proto
 func (s *server) CreateChan() string {
 	return ""
@@ -87,7 +85,7 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterGreeterServer(s, &server{})
+	pb.RegisterParadoxServer(s, &server{})
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
