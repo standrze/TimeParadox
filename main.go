@@ -40,7 +40,7 @@ type Modifier struct {
 	name string
 }
 
-type server struct {
+type Server struct {
 	pb.UnimplementedParadoxServer
 }
 
@@ -49,34 +49,21 @@ func (m *Modifier) ModifyRequest(req *http.Request) error {
 	return nil
 }
 
-func (m *Modifier) ServeHTTP(http.ResponseWriter, *http.Request) {
-	//Header().Set("Content-Type", "application/json")
-	//WriteHeader(http.StatusOK)
-	//Write([]byte(`{"message": "yo" }`))
-}
-
-func (m *Modifier) GetName() string {
-	return m.name
-}
-
-func (s *server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
+func (s *Server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
 	log.Printf("Received: %v", in.GetName())
 	return &pb.Reply{Message: "Hello " + "fucker!"}, nil
-}
-
-// protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative paradox.proto
-func (s *server) CreateChan() string {
-	return ""
 }
 
 func main() {
 
 	proxy := martian.NewProxy()
-	defer proxy.Close()
 	listener, _ := net.Listen("tcp", ":8080")
+
 	top := fifo.NewGroup()
 	top.AddRequestModifier(m)
+
 	proxy.SetRequestModifier(top)
+
 	go proxy.Serve(listener)
 
 	lis, err := net.Listen("tcp", port)
@@ -85,7 +72,7 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterParadoxServer(s, &server{})
+	pb.RegisterParadoxServer(s, &Server{})
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
