@@ -28,53 +28,76 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 )
 
 const (
-	port = ":50051"
+	port        = ":50051"
+	defaultPort = "8080"
 )
-
-var m = &Modifier{"Hello"}
-
-type Modifier struct {
-	name string
-}
 
 type Server struct {
 	pb.UnimplementedParadoxServer
+	mu           sync.Mutex
+	notification chan string
+	latest       string
 }
 
-func (m *Modifier) ModifyRequest(req *http.Request) error {
-	m.name = req.RequestURI
+func (m *Server) ModifyRequest(req *http.Request) error {
+	m.latest = req.RequestURI
 	return nil
 }
 
-func (s *Server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
-	log.Printf("Received: %v", in.GetName())
-	return &pb.Reply{Message: "Hello " + "fucker!"}, nil
+func (m *Server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
+	//s.mu.Lock()
+	//st := <-s.notification
+	//log.Printf("Received: %v", in.GetName())
+	//s.mu.Unlock()
+	return &pb.Reply{Message: "Hello " + m.latest}, nil
 }
 
-func main() {
-
+func (m *Server) StartProxy() {
 	proxy := martian.NewProxy()
-	listener, _ := net.Listen("tcp", ":8080")
+	listener, err := net.Listen("tcp", defaultPort)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
 
 	top := fifo.NewGroup()
-	top.AddRequestModifier(m)
 
+	top.AddRequestModifier(m)
 	proxy.SetRequestModifier(top)
 
 	go proxy.Serve(listener)
+}
+
+func (m *Server) StartRPC() {
+	server := grpc.NewServer()
 
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	s := grpc.NewServer()
-	pb.RegisterParadoxServer(s, &Server{})
-	if err := s.Serve(lis); err != nil {
+	pb.RegisterParadoxServer(server, m)
+
+	if err := server.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
+}
+
+func main() {
+
+	var mutex sync.Mutex
+	notification := make(chan string)
+
+	mod := &Server{
+		mu:           mutex,
+		notification: notification,
+		latest:       "",
+	}
+
+	mod.StartProxy()
+	mod.StartRPC()
 
 }
