@@ -7,25 +7,43 @@ import (
 	"github.com/google/martian"
 	"github.com/google/martian/fifo"
 	"google.golang.org/grpc"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
-	"sync"
+	"net/http/httputil"
 )
 
 type Server struct {
 	pb.UnimplementedParadoxServer
 	notification chan string
-	latest       string
+	history      History
 }
 
+type History map[string][]byte
+
 func (s *Server) ModifyRequest(req *http.Request) error {
+	fmt.Println("===Request===")
+	r, _ := httputil.DumpRequestOut(req, true)
+	fmt.Println(string(r))
+	return nil
+}
+
+func (s *Server) ModifyResponse(res *http.Response) error {
+	fmt.Println("===Response===")
+	r, _ := httputil.DumpRequestOut(res.Request, true)
+	fmt.Println(string(r))
+	r, _ = httputil.DumpResponse(res, true)
+	fmt.Println(string(r))
+	b, _ := ioutil.ReadAll(res.Body)
+	fmt.Println(string(b))
 	return nil
 }
 
 func (s *Server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
 	log.Printf("Received: %v", in.GetName())
-	return &pb.Reply{Message: "Hello " + s.latest}, nil
+	fmt.Println(len(s.history))
+	return &pb.Reply{Message: "Complete"}, nil
 }
 
 func (s *Server) StartProxy() {
@@ -39,7 +57,10 @@ func (s *Server) StartProxy() {
 	top := fifo.NewGroup()
 
 	top.AddRequestModifier(s)
+	top.AddResponseModifier(s)
+
 	proxy.SetRequestModifier(top)
+	proxy.SetResponseModifier(top)
 
 	go proxy.Serve(listener)
 }
@@ -60,14 +81,11 @@ func (s *Server) StartRPC() {
 }
 
 func main() {
-
-	var mutex sync.Mutex
 	notification := make(chan string)
 
 	mod := &Server{
-		mu:           mutex,
 		notification: notification,
-		latest:       "",
+		history:      make(map[string][]byte),
 	}
 
 	mod.StartProxy()
