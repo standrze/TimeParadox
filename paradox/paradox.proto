@@ -1,15 +1,25 @@
 syntax = "proto3";
 
-package paradox;
+package greet;
 
-service Paradox {
-  rpc HelloWorld (Request) returns (Reply) {}
+message GreetRequest {
+  string result = 1;
 }
 
-message Request {
-  string name = 1;
+message GreetResponse {
+  string result = 1;
 }
 
-message Reply {
-  string message = 1;
+message HistoryRequest {
+  string result = 1;
+}
+
+message HistoryResponse {
+  string result = 1;
+}
+
+service GreetService{
+  // Unary
+  rpc Greet(GreetRequest) returns (GreetResponse) {};
+  rpc History(HistoryRequest) returns (stream HistoryResponse) {};
 }

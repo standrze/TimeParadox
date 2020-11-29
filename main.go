@@ -1,93 +1,118 @@
 package main
 
 import (
-	pb "TimeParadox/paradox"
+	pb "awesomeProject3/greet"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"github.com/google/martian"
 	"github.com/google/martian/fifo"
+	"github.com/google/martian/mitm"
 	"google.golang.org/grpc"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"time"
 )
 
+// protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative paradox.proto
+
 type Server struct {
-	pb.UnimplementedParadoxServer
-	notification chan string
-	history      History
+	pb.UnimplementedGreetServiceServer
+	history History
 }
 
 type History map[string][]byte
 
-func (s *Server) ModifyRequest(req *http.Request) error {
-	fmt.Println("===Request===")
-	r, _ := httputil.DumpRequestOut(req, true)
-	fmt.Println(string(r))
+func (server *Server) ModifyRequest(req *http.Request) error {
 	return nil
 }
 
-func (s *Server) ModifyResponse(res *http.Response) error {
-	fmt.Println("===Response===")
-	r, _ := httputil.DumpRequestOut(res.Request, true)
-	fmt.Println(string(r))
-	r, _ = httputil.DumpResponse(res, true)
-	fmt.Println(string(r))
-	b, _ := ioutil.ReadAll(res.Body)
-	fmt.Println(string(b))
+func (server *Server) ModifyResponse(res *http.Response) error {
+	ctx := martian.NewContext(res.Request)
+
+	raw, err := httputil.DumpResponse(res, true)
+	if err != nil {
+		log.Fatalf("Failed to dump response: %v", err)
+		return err
+	}
+
+	id := ctx.ID()
+	server.history[id] = raw
+
 	return nil
 }
 
-func (s *Server) HelloWorld(ctx context.Context, in *pb.Request) (*pb.Reply, error) {
-	log.Printf("Received: %v", in.GetName())
-	fmt.Println(len(s.history))
-	return &pb.Reply{Message: "Complete"}, nil
-}
-
-func (s *Server) StartProxy() {
+func (server *Server) StartProxy() {
 	proxy := martian.NewProxy()
+
+	tr := &http.Transport{
+		Dial: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).Dial,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+		DisableCompression: true,
+	}
+	proxy.SetRoundTripper(tr)
+
+	x509c, priv, _ := mitm.NewAuthority("martian.proxy", "Martian Authority", 30*24*time.Hour)
+	mc, _ := mitm.NewConfig(x509c, priv)
+
+	mc.SkipTLSVerify(true)
+
+	proxy.SetMITM(mc)
 
 	listener, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatalf("failed to listen proxy: %v", err)
 	}
 
-	top := fifo.NewGroup()
+	group := fifo.NewGroup()
 
-	top.AddRequestModifier(s)
-	top.AddResponseModifier(s)
+	group.AddRequestModifier(server)
+	group.AddResponseModifier(server)
 
-	proxy.SetRequestModifier(top)
-	proxy.SetResponseModifier(top)
+	proxy.SetRequestModifier(group)
+	proxy.SetResponseModifier(group)
 
 	go proxy.Serve(listener)
 }
 
-func (s *Server) StartRPC() {
+func (server *Server) Greet(ctx context.Context, in *pb.GreetRequest) (*pb.GreetResponse, error) {
+	log.Printf("Received: %v", in.GetResult())
+	for key, _ := range server.history {
+		fmt.Printf("Key: %v\n", key)
+	}
+	return &pb.GreetResponse{Result: "Complete:\n"}, nil
+}
+
+func (server *Server) History(in *pb.HistoryRequest, stream pb.GreetService_HistoryServer) error {
+	fmt.Printf("GreetManyTimes function was invoked with %v\n", in.GetResult())
+	for key, _ := range server.history {
+		res := &pb.HistoryResponse{Result: key}
+		stream.Send(res)
+	}
+	fmt.Printf("Completed\n")
+	return nil
+}
+
+func main() {
 	server := grpc.NewServer()
 
-	lis, err := net.Listen("tcp", ":50051")
+	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("failed to listen : %v", err)
 	}
 
-	pb.RegisterParadoxServer(server, s)
+	modifier := &Server{history: make(map[string][]byte)}
+	pb.RegisterGreetServiceServer(server, modifier)
 
-	if err := server.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
-}
-
-func main() {
-	notification := make(chan string)
-
-	mod := &Server{
-		notification: notification,
-		history:      make(map[string][]byte),
-	}
-
-	mod.StartProxy()
-	mod.StartRPC()
+	modifier.StartProxy()
+	server.Serve(listener)
 }
